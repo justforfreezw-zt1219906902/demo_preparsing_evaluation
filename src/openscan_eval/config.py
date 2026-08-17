@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from importlib.resources import files
 import os
 from pathlib import Path
 from typing import Any
@@ -9,7 +8,7 @@ from typing import Any
 import yaml
 
 
-DEFAULT_CONFIG = files("openscan_eval").joinpath("default.yaml")
+DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "configs" / "default.yaml"
 
 
 def load_dotenv(path: str | Path = ".env") -> None:
@@ -49,7 +48,7 @@ def _read_yaml(path) -> dict[str, Any]:
 
 
 def load_config(path: str | Path | None = None) -> dict[str, Any]:
-    """Load defaults and recursively apply an optional YAML override."""
+    """Load configs/default.yaml, then recursively apply an optional user YAML."""
     load_dotenv()
     defaults = _read_yaml(DEFAULT_CONFIG)
     return defaults if path is None else _merge(defaults, _read_yaml(Path(path)))

@@ -1,257 +1,160 @@
-# OpenScan 工具运行指南
+# OpenScan 运行指南
 
-程序入口为项目根目录下的 `main.py`。程序自动读取同目录的 `.env`，原始数据集只读，所有结果写入项目的 `output/`。
+## 1. 配置环境
 
-## 1. 环境配置
-
-编辑 `.env`：
+项目自动读取根目录 `.env`：
 
 ```dotenv
-# 包含 positions.csv 和原始图片的数据集目录
 OPENSCAN_DATASET_DIR=/path/to/dataset
-
-# 用于对比的参考 STL
+OPENSCAN_U2NET_MODEL=/path/to/U2Net_v1.onnx
 OPENSCAN_REFERENCE_MESH=/path/to/reference.stl
-
-# 外部重建流程生成的模型；尚未生成时可以留空
 OPENSCAN_RECONSTRUCTION_MESH=/path/to/reconstructed.obj
 ```
 
-数据集采用扁平结构，CSV 和图片位于同一级目录：
+数据集目录中，CSV 和图片位于同一级：
 
 ```text
 dataset/
 ├── positions.csv
 ├── default_0_1.jpg
-├── default_0_2.jpg
 └── ...
 ```
 
-## 2. 运行完整流程
+## 2. 默认配置来源
 
-进入项目目录：
-
-```bash
-cd /Users/zhaowei/PyCharmMiscProject/xolo_3d_reconstrcuction/demo_preparing_and_evaluation
-```
-
-使用完整原始画布和原始图片尺寸运行所有阶段：
+唯一默认配置是 `configs/default.yaml`。CLI 总是先读取该文件。使用
+`--config my-config.yaml` 时，用户文件递归覆盖默认值。
 
 ```bash
-.venv/bin/python main.py all --full-resolution
+.venv/bin/python main.py all --config my-config.yaml
 ```
 
-完整流程为：
+## 3. 裁剪与 full-resolution
 
-```text
-数据验证
-→ 图片质量分析
-→ Mask 生成
-→ 原图分辨率裁剪和预处理
-→ RGB / Mask / RGBA / Edge 输出
-→ OpenScan 姿态转换
-→ PyTorch3D 数据集导出
-→ 网格对比
-→ HTML 报告
+```yaml
+crop:
+  enabled: true
+  mode: manual
+  roi_xyxy: [0.25, 0.18, 0.72, 0.88]
+  margin_ratio: 0.08
+  resize:
+    enabled: true
+    output_size: [1200, 1000]
 ```
 
-如果 `OPENSCAN_RECONSTRUCTION_MESH` 为空或文件不存在，程序会跳过网格对比，其余阶段仍正常完成。
+`roi_xyxy` 是相对于原始图片的归一化坐标 `[x0, y0, x1, y1]`。
 
-## 3. 分阶段运行
-
-### 验证数据集
-
-检查 CSV、缺失图片、损坏图片、重复记录和图片尺寸：
-
-```bash
-.venv/bin/python main.py validate
-```
-
-验证结果只显示在终端，不保存运行历史。
-
-### 图片质量分析
-
-```bash
-.venv/bin/python main.py quality
-```
-
-输出：
-
-```text
-output/quality_report.csv
-```
-
-### Mask 与图片预处理
-
-保留完整原始画布和原始图片尺寸：
-
-```bash
-.venv/bin/python main.py preprocess --full-resolution
-```
-
-使用配置中的输出尺寸，默认为 `1200×900`：
+普通运行会裁剪并缩放：
 
 ```bash
 .venv/bin/python main.py preprocess
 ```
 
-输出目录：
+保留裁剪，但不缩放裁剪结果：
+
+```bash
+.venv/bin/python main.py preprocess --full-resolution
+```
+
+`--full-resolution` 不会关闭裁剪。
+
+## 4. 一次运行完整流程
+
+```bash
+.venv/bin/python main.py all --full-resolution
+```
+
+顺序为：
+
+```text
+验证 → 解析裁剪 → U2Net 分割 → 对象区域质量分析
+→ 可选图像增强 → RGBA → Preview → 姿态元数据 → 可用时进行网格对比
+```
+
+没有配置外部重建网格时，网格比较自动跳过。
+
+## 5. 分阶段运行
+
+```bash
+.venv/bin/python main.py validate
+.venv/bin/python main.py quality
+.venv/bin/python main.py preprocess --full-resolution
+.venv/bin/python main.py export --full-resolution
+.venv/bin/python main.py compare
+.venv/bin/python main.py report
+```
+
+处理过程会输出轻量进度日志。
+
+## 6. 输出
+
+默认预处理输出：
 
 ```text
 output/processed/
-├── rgb/
-├── masks/
 ├── rgba/
-├── edges/
 ├── previews/
 └── crop_transforms.json
 ```
 
-建议检查 `output/processed/previews/`。对于自动 Mask 不准确的图片，可以提供外部单通道 PNG Mask，并在 YAML 中设置：
+默认不会写入独立 RGB、Mask 或 Edge。需要调试 Mask 时设置：
 
 ```yaml
-mask:
-  mode: external
+debug:
+  save_masks: true
 ```
 
-外部 Mask 放置方式：
-
-```text
-dataset/
-└── masks/
-    ├── default_0_1.png
-    ├── default_0_2.png
-    └── ...
-```
-
-### 导出 PyTorch3D 数据集
-
-全分辨率导出：
-
-```bash
-.venv/bin/python main.py export --full-resolution
-```
-
-配置尺寸导出：
-
-```bash
-.venv/bin/python main.py export
-```
-
-输出：
+PyTorch3D 交接目录：
 
 ```text
 output/exports/pytorch3d/
-├── images/
-├── masks/
-├── edges/
+├── rgba/
 ├── metadata.json
 └── dataset_manifest.csv
 ```
 
-`metadata.json` 中的姿态来自 OpenScan 指令角度，标记为 `openscan_commanded`。这些角度用于外部重建初始化，不应视为标定后的真实相机姿态。
+RGBA 是主要重建输入，其中 alpha 保留柔和抗锯齿边缘。
 
-### 对比参考 STL 和重建模型
+## 7. 分割模式
 
-确保 `.env` 中已经配置：
+默认：
 
-```dotenv
-OPENSCAN_REFERENCE_MESH=/path/to/reference.stl
-OPENSCAN_RECONSTRUCTION_MESH=/path/to/reconstructed.obj
+```yaml
+mask:
+  mode: u2net
+  model_env_var: OPENSCAN_U2NET_MODEL
 ```
 
-运行：
+可选模式：
 
-```bash
-.venv/bin/python main.py compare
+```yaml
+mask:
+  mode: background_subtraction
 ```
 
-也可以在命令中临时指定文件：
+或提供外部 PNG Mask：
 
-```bash
-.venv/bin/python main.py compare \
-  --reference /path/to/reference.stl \
-  --reconstruction /path/to/reconstructed.obj
+```yaml
+mask:
+  mode: external
+  external_dir: masks
 ```
 
-输出：
+外部 Mask 放在 `DATASET/masks/`，文件名需与原图主文件名一致。
 
-```text
-output/evaluation/
-├── metrics.json
-├── metrics.csv
-├── meshes/
-├── views/
-├── distance_histogram.png
-└── report.html
-```
+## 8. 可选预处理
 
-对比不会执行自由缩放。只有在配置中启用时才执行旋转和平移刚性对齐。
+以下开关相互独立：
 
-### 生成总报告
+- `preprocessing.clahe.enabled`
+- `preprocessing.highlight_suppression.enabled`
+- `preprocessing.sharpen.enabled`
+- `preprocessing.brightness_normalization.enabled`
 
-```bash
-.venv/bin/python main.py report
-```
-
-输出：
-
-```text
-output/report.html
-```
-
-## 4. 使用其他配置文件
-
-所有命令均支持 `--config`：
-
-```bash
-.venv/bin/python main.py all \
-  --full-resolution \
-  --config configs/default.yaml
-```
-
-主要参数位于 `configs/default.yaml`，包括：
-
-- 质量分类阈值
-- Mask 模式和形态学参数
-- 裁剪边距和输出尺寸
-- CLAHE 开关
-- 高光抑制开关
-- 锐化开关
-- 亮度归一化开关
-- 网格采样数量
-- 热力图毫米范围
-- 刚性对齐开关
-
-## 5. 临时指定其他数据集
-
-无需修改 `.env`，可以使用：
-
-```bash
-.venv/bin/python main.py all \
-  --dataset /path/to/another/dataset \
-  --full-resolution
-```
-
-## 6. 查看帮助
-
-```bash
-.venv/bin/python main.py --help
-.venv/bin/python main.py all --help
-.venv/bin/python main.py compare --help
-```
-
-## 7. 运行测试
+## 9. 测试
 
 ```bash
 .venv/bin/python -m pytest -q
 ```
 
-## 8. 注意事项
-
-- 原始图片不会被修改。
-- 项目不执行 PyTorch3D 重建，只负责准备输入数据和评价外部重建结果。
-- `--full-resolution` 会关闭裁剪，输出与原图具有完全相同的宽高，因此会显著增加运行时间和磁盘占用。
-- 自动 Mask 不依赖大型神经网络，但反光金属、蓝色反射和物体与转台接触区域可能需要人工检查。
-- 最终重建前建议检查 `output/processed/previews/`。
-- 参考 STL 可能被外部重建项目用作初始化几何，因此评价结果不代表独立的绝对测量精度。
+项目不包含 PyTorch3D 重建代码，不修改原始图片，也不执行自由尺度对齐。

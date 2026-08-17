@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
   "matplotlib>=3.8",
   "numpy>=1.26",
+  "onnxruntime>=1.18",
   "opencv-python-headless>=4.9",
   "Pillow>=10",
   "PyYAML>=6",
@@ -26,9 +27,6 @@ openscan-eval = "openscan_eval.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-openscan_eval = ["default.yaml"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

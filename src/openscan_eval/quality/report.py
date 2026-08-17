@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+import numpy as np
 
 from ..dataset.loader import Dataset
 from .contrast import contrast_metric
@@ -32,22 +33,28 @@ def _overrides(path: Path) -> dict[str, str]:
         return {r["image"].strip(): r["status"].strip().upper() for r in csv.DictReader(f)}
 
 
-def analyze_quality(dataset: Dataset, config: dict[str, Any], output: Path) -> list[dict[str, Any]]:
+def object_quality_region(image: np.ndarray, mask: np.ndarray | None) -> tuple[np.ndarray,np.ndarray | None]:
+    if mask is None or not np.any(mask):
+        gray=cv2.cvtColor(image,cv2.COLOR_BGR2GRAY); return gray,None
+    binary=mask>0; ys,xs=np.where(binary)
+    x0,x1,y0,y1=xs.min(),xs.max()+1,ys.min(),ys.max()+1
+    gray=cv2.cvtColor(image[y0:y1,x0:x1],cv2.COLOR_BGR2GRAY)
+    return gray,(binary[y0:y1,x0:x1].astype(np.uint8)*255)
+
+
+def analyze_quality(dataset: Dataset, config: dict[str, Any], output: Path, regions: dict[str,tuple[np.ndarray,np.ndarray]] | None=None) -> list[dict[str, Any]]:
     cfg = config["quality"]
     overrides = _overrides(dataset.root / cfg["override_file"])
     rows = []
     total=len(dataset.frames); interval=max(1,total//10)
     for index,frame in enumerate(dataset.frames,1):
-        image = cv2.imread(str(dataset.image_path(frame)))
-        h, w = image.shape[:2]
-        scale = min(1.0, cfg["analysis_max_dimension"] / max(h, w))
-        if scale < 1: image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        # Central ROI reduces domination by the fixed wall/background.
-        roi = gray[int(gray.shape[0]*.12):int(gray.shape[0]*.92), int(gray.shape[1]*.18):int(gray.shape[1]*.82)]
-        lap, tenengrad = sharpness_metrics(roi)
-        mean, dark, bright = exposure_metrics(roi, cfg["dark_clip_threshold"], cfg["bright_clip_threshold"])
-        contrast = contrast_metric(roi)
+        if regions and frame.image in regions: image,mask=regions[frame.image]
+        else: image,mask=cv2.imread(str(dataset.image_path(frame))),None
+        roi,roi_mask=object_quality_region(image,mask)
+        lap, tenengrad = sharpness_metrics(roi,roi_mask)
+        pixels=roi[roi_mask>0] if roi_mask is not None and np.any(roi_mask) else roi
+        mean, dark, bright = exposure_metrics(pixels, cfg["dark_clip_threshold"], cfg["bright_clip_threshold"])
+        contrast = contrast_metric(pixels)
         status, reason = _classify(lap, contrast, dark, bright, cfg)
         if frame.image in overrides:
             status, reason = overrides[frame.image], "manual_override"

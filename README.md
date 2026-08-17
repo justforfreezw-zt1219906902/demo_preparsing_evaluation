@@ -1,55 +1,96 @@
 # OpenScan Evaluation Toolkit
 
-This standalone project prepares an OpenScan image dataset for an external
-PyTorch3D reconstruction pipeline and, in later phases, evaluates reconstructed
-meshes against a reference STL.
+This project prepares a flat OpenScan image dataset for an **external**
+PyTorch3D reconstruction project and compares an externally reconstructed mesh
+with a reference STL. It does not implement reconstruction, differentiable
+rendering, mesh deformation, pose refinement, SfM/MVS, COLMAP, or Metashape.
 
-It deliberately does **not** perform reconstruction, differentiable rendering,
-mesh optimization, pose refinement, SfM/MVS, COLMAP, or Metashape processing.
+## Configuration
 
-## Implemented pipeline
+[`configs/default.yaml`](configs/default.yaml) is the single authoritative
+default configuration. The CLI always loads it first. `--config FILE` then
+recursively overrides only the supplied values.
 
-The toolkit validates the flat dataset, classifies image quality, creates
-object masks and consistent crops, applies optional preprocessing, converts
-commanded OpenScan angles, exports a PyTorch3D-ready dataset, and compares an
-external reconstructed mesh with the configured reference STL.
+The project automatically reads `.env` without replacing environment variables
+that are already set:
 
-## Dataset layout
+```dotenv
+OPENSCAN_DATASET_DIR=/path/to/dataset
+OPENSCAN_U2NET_MODEL=/path/to/U2Net_v1.onnx
+OPENSCAN_REFERENCE_MESH=/path/to/reference.stl
+OPENSCAN_RECONSTRUCTION_MESH=/path/to/reconstructed.obj
+```
+
+The ONNX model is local runtime data and must not be committed.
+
+## Dataset
 
 ```text
 dataset/
+├── positions.csv
 ├── default_0_1.jpg
-├── default_0_2.jpg
-└── positions.csv
+└── ...
 ```
 
-The CSV must contain `image`, `position_index`, `phi_deg`, and `theta_deg`.
-Commanded angles are initialization metadata, not calibrated ground-truth poses.
+The CSV requires `image`, `position_index`, `phi_deg`, and `theta_deg`.
+Commanded angles are initialization metadata, not calibrated camera poses.
 
-## Install and validate
+## Crop semantics
+
+```yaml
+crop:
+  enabled: true
+  mode: manual              # manual | auto_from_masks
+  roi_xyxy: [0.25, 0.18, 0.72, 0.88]
+  margin_ratio: 0.08
+  resize:
+    enabled: true
+    output_size: [1200, 1000]
+```
+
+`roi_xyxy` is `[x0, y0, x1, y1]` in normalized coordinates of the original
+image. A manual crop is applied before U2Net inference and visibly affects RGBA
+and previews.
+
+`--full-resolution` means **apply the crop but do not resize the cropped
+result**. It does not disable cropping.
+
+## Segmentation and output
+
+U2Net ONNX is the default segmentation backend. The adapter discovers tensor
+names and shapes from the session, respects fixed input dimensions, reuses one
+session, and restores the soft prediction to crop dimensions. Optional modes
+are `background_subtraction` and `external`.
+
+Default processed output is deliberately small:
+
+```text
+output/processed/
+├── rgba/
+├── previews/
+└── crop_transforms.json
+```
+
+RGBA is the reconstruction handoff: processed object RGB plus soft segmentation
+alpha. Set `debug.save_masks: true` to additionally write `processed/masks/`.
+It is false by default. Preview panels show cropped RGB, segmentation overlay,
+RGBA on a checkerboard, pose, sharpness, filename, and status.
+
+Quality metrics are evaluated on the segmented object or its mask bounding box,
+not a fixed wall-dominated rectangle. CLAHE, highlight suppression, sharpening,
+and brightness normalization remain independent switches.
+
+## Commands
 
 ```bash
 python -m pip install -e ".[dev]"
-export OPENSCAN_DATASET_DIR=/path/to/dataset
-openscan-eval validate
-```
 
-You can instead set `OPENSCAN_DATASET_DIR` and `OPENSCAN_REFERENCE_MESH` in the
-project `.env` file. It is loaded automatically and is excluded from Git.
+# Entire available flow; crop is resized according to YAML
+.venv/bin/python main.py all
 
-Run every available stage with:
-
-```bash
-openscan-eval all
-```
-
-From a source checkout, the explicit program entry point is also available:
-
-```bash
-# Full pipeline using reconstruction assets at the original image resolution
+# Entire flow; crop is retained at its native cropped resolution
 .venv/bin/python main.py all --full-resolution
 
-# Run individual stages
 .venv/bin/python main.py validate
 .venv/bin/python main.py quality
 .venv/bin/python main.py preprocess --full-resolution
@@ -58,38 +99,12 @@ From a source checkout, the explicit program entry point is also available:
 .venv/bin/python main.py report
 ```
 
-Without `--full-resolution`, reconstruction assets use the configured crop and
-`crop.output_size` (1200×900 by default). With `--full-resolution`, cropping is
-disabled and RGB, mask, RGBA, and edge files retain the complete source canvas
-and exact source dimensions. Mask analysis may still use a reduced working scale
-before being mapped back to the source pixels.
+The PyTorch3D handoff contains only `rgba/`, `metadata.json`, and
+`dataset_manifest.csv`; it does not duplicate RGB, masks, or edges.
 
-Set `OPENSCAN_RECONSTRUCTION_MESH` in `.env` after the external reconstruction
-pipeline produces a mesh. Until then, `all` skips mesh comparison. Individual
-commands are `validate`, `quality`, `preprocess`, `export`, `compare`, and
-`report`.
+Mesh comparison does not optimize scale. Optional ICP is rigid only and is off
+by default. Metrics remain mean surface distance, P95 surface distance, and
+symmetric sampled Chamfer distance.
 
-Generated files go to `output/`, never into the source dataset. They include
-`quality_report.csv`, processed RGB/masks/RGBA/edges/previews, crop transforms,
-PyTorch3D metadata and manifest, and (when a reconstruction exists) mesh metrics,
-overlays, heatmap, histogram, and HTML report.
-
-Automatic masks intentionally avoid a mandatory neural model. With reflective
-metal touching a blue turntable, inspect `output/processed/previews`; for exact
-silhouettes supply single-channel masks under `DATASET/masks/` and set
-`mask.mode: external`.
-
-Validation prints its report to the terminal and exits unsuccessfully when
-errors are present. It does not save an experiment history or run record.
-Original images are only read and are never modified.
-
-Configuration defaults live in `configs/default.yaml`; pass another file with
-`--config`. The reference and reconstructed mesh paths used by the later
-comparison stage are also configured there. To override the environment for one
-command, use `openscan-eval validate --dataset /path/to/dataset`.
-
-> This repository evaluates the effect of imaging and preprocessing conditions
-> on an external reconstruction pipeline. Because the external PyTorch3D
-> workflow may use the reference STL as its initialization geometry, the
-> reported mesh deviations should not be interpreted as an independent
-> measurement of absolute reconstruction accuracy.
+> If the external workflow initializes from the reference STL, reported mesh
+> deviations are not an independent measurement of absolute accuracy.

@@ -12,7 +12,9 @@ def compare_meshes(reference_path,reconstruction_path,output:Path,config:dict):
     cfg=config["evaluation"]; output.mkdir(parents=True,exist_ok=True); (output/"meshes").mkdir(exist_ok=True); (output/"views").mkdir(exist_ok=True)
     reference,reconstruction=load_mesh(reference_path),load_mesh(reconstruction_path); aligned=False; transform=np.eye(4)
     if cfg.get("rigid_alignment",False):
-        n=min(10000,len(reference.vertices),len(reconstruction.vertices)); transform=rigid_icp(np.asarray(reconstruction.vertices)[:n],np.asarray(reference.vertices)); reconstruction.apply_transform(transform); aligned=True
+        n=min(10000,int(cfg["sample_count"])); np.random.seed(int(cfg["random_seed"]))
+        reference_points,_=trimesh.sample.sample_surface(reference,n); reconstruction_points,_=trimesh.sample.sample_surface(reconstruction,n)
+        transform=rigid_icp(reconstruction_points,reference_points); reconstruction.apply_transform(transform); aligned=True
     reconstruction.export(output/"meshes"/"aligned_reconstruction.ply")
     metrics=distance_metrics(reference,reconstruction,int(cfg["sample_count"]),int(cfg["random_seed"])); metrics.update({"alignment_applied":aligned,"scale_alignment_applied":False,"rigid_transform":transform.tolist(),"reference_mesh":str(reference_path),"reconstruction_mesh":str(reconstruction_path)})
     overlays(reference,reconstruction,output/"views"); heatmap_and_histogram(reference,reconstruction,output,float(cfg["heatmap_max_mm"]))

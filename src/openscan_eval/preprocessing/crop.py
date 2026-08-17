@@ -4,6 +4,20 @@ import cv2
 import numpy as np
 
 
+def normalized_roi_to_box(roi, width: int, height: int) -> tuple[int,int,int,int]:
+    if len(roi)!=4: raise ValueError("crop.roi_xyxy must contain four normalized values")
+    x0,y0,x1,y1=map(float,roi)
+    if not (0<=x0<x1<=1 and 0<=y0<y1<=1):
+        raise ValueError("crop.roi_xyxy must satisfy 0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1")
+    return int(round(x0*width)),int(round(y0*height)),int(round(x1*width)),int(round(y1*height))
+
+
+def resolve_manual_crop(config: dict, width: int, height: int) -> tuple[int,int,int,int]:
+    if not config.get("enabled",True): return (0,0,width,height)
+    if config.get("mode","manual")!="manual": raise ValueError("resolve_manual_crop requires crop.mode=manual")
+    return normalized_roi_to_box(config["roi_xyxy"],width,height)
+
+
 def bounding_box(mask: np.ndarray, margin_ratio: float = 0.0) -> tuple[int, int, int, int]:
     ys, xs = np.where(mask > 0)
     if not len(xs): return (0, 0, mask.shape[1], mask.shape[0])

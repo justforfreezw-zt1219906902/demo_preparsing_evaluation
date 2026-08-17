@@ -11,7 +11,6 @@ from .dataset.loader import load_dataset
 from .dataset.validation import validate_dataset
 from .export.pytorch3d_dataset import export_pytorch3d
 from .preprocessing.pipeline import preprocess_dataset
-from .quality.report import analyze_quality
 from .reporting import create_dataset_report, summarize
 
 
@@ -24,7 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, help_text in (("quality","Analyze image quality"),("preprocess","Generate masks and processed images"),("export","Export a PyTorch3D-ready dataset"),("report","Generate a dataset report"),("all","Run validation, quality, preprocessing, export, and available comparison")):
         command=subparsers.add_parser(name,help=help_text); command.add_argument("--dataset",type=Path); command.add_argument("--config",type=Path)
         if name in {"preprocess","export","all"}:
-            command.add_argument("--full-resolution",action="store_true",help="Keep processed reconstruction assets at source resolution")
+            command.add_argument("--full-resolution",action="store_true",help="Keep the configured crop but do not resize it")
     compare=subparsers.add_parser("compare",help="Compare configured reference and reconstruction meshes")
     compare.add_argument("--reference",type=Path); compare.add_argument("--reconstruction",type=Path); compare.add_argument("--config",type=Path)
     summary=subparsers.add_parser("summarize",help="Summarize output folders containing completed evaluations"); summary.add_argument("root",type=Path)
@@ -34,8 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _context(args):
     config=load_config(getattr(args,"config",None)); dataset=load_dataset(config,getattr(args,"dataset",None)); output=Path(config["dataset"]["output_dir"]).resolve(); output.mkdir(parents=True,exist_ok=True)
     if getattr(args,"full_resolution",False):
-        config["crop"]["output_size"]=None
-        config["crop"]["enabled"]=False
+        config["crop"]["resize"]["enabled"]=False
     return config,dataset,output
 
 
@@ -53,17 +51,21 @@ def main(argv: list[str] | None = None) -> int:
         if args.command=="validate":
             print(json.dumps(report, indent=2)); print(f"Validation {'passed' if report['valid'] else 'failed'}"); return 0 if report["valid"] else 1
         if not report["valid"]: print("Dataset validation failed; processing stopped."); return 1
-        logging.info("开始质量分析")
-        quality=analyze_quality(dataset,config,output)
-        logging.info("质量分析完成")
-        if args.command=="quality": print(f"Quality report: {output/'quality_report.csv'}"); return 0
+        if args.command=="quality":
+            logging.info("开始裁剪、分割和对象区域质量分析")
+            preprocess_dataset(dataset,config,output,write_outputs=False)
+            logging.info("质量分析完成")
+            print(f"Quality report: {output/'quality_report.csv'}"); return 0
         if args.command in {"preprocess","all"}:
-            logging.info("开始图片预处理%s","（完整原始尺寸）" if getattr(args,"full_resolution",False) else "")
-            preprocess_dataset(dataset,config,output,quality)
+            logging.info("开始裁剪、分割、对象质量分析和图片预处理%s","（裁剪后不缩放）" if getattr(args,"full_resolution",False) else "")
+            result=preprocess_dataset(dataset,config,output)
+            quality=result["quality"]
             logging.info("图片预处理完成")
         if args.command=="preprocess": print(f"Processed data: {output/'processed'}"); return 0
         if args.command in {"export","all"}:
-            if not (output/"processed"/"masks").is_dir(): preprocess_dataset(dataset,config,output,quality)
+            if args.command=="export":
+                logging.info("重新生成与当前配置一致的 RGBA")
+                result=preprocess_dataset(dataset,config,output);quality=result["quality"]
             logging.info("开始导出 PyTorch3D 数据集")
             export_pytorch3d(dataset,output,quality)
             logging.info("PyTorch3D 数据集导出完成")
