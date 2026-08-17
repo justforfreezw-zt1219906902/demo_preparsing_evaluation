@@ -1,0 +1,64 @@
+dataset:
+  env_var: OPENSCAN_DATASET_DIR
+  images_dir: .
+  positions_csv: positions.csv
+  require_consistent_dimensions: true
+  output_dir: output
+mesh_comparison:
+  reference_mesh_env_var: OPENSCAN_REFERENCE_MESH
+  reconstruction_mesh: reconstructed.obj
+  rigid_alignment: false
+validation:
+  allowed_image_extensions: [.jpg, .jpeg, .png, .tif, .tiff]
+quality:
+  analysis_max_dimension: 1200
+  dark_clip_threshold: 5
+  bright_clip_threshold: 250
+  warning_sharpness: 17.0
+  reject_sharpness: 12.0
+  warning_clip_percent: 3.0
+  reject_clip_percent: 12.0
+  warning_contrast: 25.0
+  reject_contrast: 12.0
+  override_file: quality_override.csv
+mask:
+  mode: automatic
+  analysis_scale: 0.25
+  background_samples: 9
+  difference_threshold: 24
+  opening_kernel: 3
+  closing_kernel: 11
+  min_component_ratio: 0.002
+  keep_largest_component: true
+  fill_holes: false
+  gradient_threshold: 20
+  scan_roi_xyxy: [0.33, 0.30, 0.60, 0.82]
+  blue_saturation_min: 120
+crop:
+  enabled: true
+  margin_ratio: 0.12
+  enforce_same_size: true
+  output_size: [1200, 900]
+preprocessing:
+  brightness_normalization:
+    enabled: false
+    target_mean: 128
+  clahe:
+    enabled: false
+    clip_limit: 2.0
+    grid_size: [8, 8]
+  highlight_suppression:
+    enabled: false
+    threshold: 220
+    strength: 0.8
+  sharpen:
+    enabled: false
+    amount: 0.5
+    radius: 1.0
+pose:
+  convention: object_rotation_z_then_x
+evaluation:
+  sample_count: 20000
+  random_seed: 42
+  heatmap_max_mm: 5.0
+  rigid_alignment: false
